@@ -4,6 +4,7 @@ import java.awt.geom.Point2D;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.Map;
 
 import javax.xml.stream.XMLStreamException;
 
@@ -16,14 +17,13 @@ import org.kohsuke.args4j.CmdLineParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.diffplug.common.base.Errors;
-
 import de.farberg.traci.util.CommandLineOptionsTemplate;
 import de.farberg.traci.util.EdgeIdToNameMapping;
 import de.farberg.traci.util.LoggingUtil;
-import it.polito.appeal.traci.Lane;
+import it.polito.appeal.traci.Edge;
 import it.polito.appeal.traci.PositionConversionQuery;
 import it.polito.appeal.traci.SumoTraciConnection;
+import it.polito.appeal.traci.Vehicle;
 
 public class TraciSimpleTraceout {
 	static {
@@ -41,42 +41,33 @@ public class TraciSimpleTraceout {
 		}
 
 		CSVPrinter csvPrinter = options.csvOutFile == null ? null
-				: CSVFormat.EXCEL
-						.withHeader("timestamp", "vehicle-id", "vehicle-type", "location-x", "location-y", "speed", "fuel-consumption",
-								"co2-emission", "co-emission", "hc-emission", "noise-emission", "nox-emission", "pmx-emission")
-						.withDelimiter(',')
-						.withQuote('"')
-						.print(new FileWriter(options.csvOutFile));
+				: CSVFormat.EXCEL.withHeader("timestamp", "vehicle-id", "vehicle-type", "location-lat", "location-long", "edge-id",
+						"edge-name", "speed", "fuel-consumption", "co2-emission", "co-emission", "hc-emission", "noise-emission",
+						"nox-emission", "pmx-emission").withDelimiter(',').withQuote('"').print(new FileWriter(options.csvOutFile));
 
 		log.debug("Trying to establish connection to sumo @ {}:{}", options.traciAddress, options.traciPort);
 		SumoTraciConnection traci = new SumoTraciConnection(InetAddress.getByName(options.traciAddress), options.traciPort);
 		PositionConversionQuery positionConversion = traci.queryPositionConversion();
-		EdgeIdToNameMapping edgeToNameMapping = null;
 
+		// Check if we need to read the net.xml file in order to perform edge id -> name mapping
+		EdgeIdToNameMapping edgeToNameMapping = null;
 		if (options.netFile != null) {
 			edgeToNameMapping = new EdgeIdToNameMapping(options.netFile);
 		}
 
-		for (Lane lane : traci.getLaneRepository().getAll().values()) {
-			Point2D position = new Point2D.Double(lane.getShape().getBounds().getCenterX(), lane.getShape().getBounds().getCenterY());
-			positionConversion.setObsolete();
-			positionConversion.setPositionToConvert(position, true);
-			Point2D point2d = positionConversion.get();
-
-			String name = edgeToNameMapping != null ? edgeToNameMapping.getNameForEdgeId(lane.getParentEdge().getID()) : "<no name>";
-			log.debug("{}: x/y: {} --> lat/long: {}, {}", name, position, point2d.getY(), point2d.getX());
-
-		}
-
 		for (int i = 0; i < options.iterations; ++i) {
 			traci.nextSimStep();
-			log.debug("At step {}/{}", i, options.iterations - 1);
 
-			traci.getVehicleRepository().getAll().values().stream().forEach(Errors.log().wrap(vehicle -> {
+			Map<String, Vehicle> vehicles = traci.getVehicleRepository().getAll();
 
+			log.debug("At step {}/{} with {} vehicles", i, options.iterations - 1, vehicles.size());
+
+			for (Vehicle vehicle : vehicles.values()) {
 				int currentSimTime = traci.getCurrentSimTime();
+
 				String id = vehicle.getID();
 				String type = vehicle.getType();
+
 				double x = vehicle.getPosition().getX();
 				double y = vehicle.getPosition().getY();
 				double speed = vehicle.getSpeed();
@@ -89,19 +80,25 @@ public class TraciSimpleTraceout {
 				double noxEmission = vehicle.getNoxEmission();
 				double pmxEmission = vehicle.getPmxEmission();
 
+				// Convert from SUMO coordinates to lat/long
 				Point2D position = new Point2D.Double(x, y);
 				positionConversion.setObsolete();
 				positionConversion.setPositionToConvert(position, true);
 				Point2D point2d = positionConversion.get();
 
-				log.debug("x/y: {}, lat/long: {}", position, point2d);
+				// Determine current edge name and id
+				Edge currentEdge = vehicle.getCurrentEdge();
+				String edgeName = (edgeToNameMapping != null) ? edgeToNameMapping.getNameForEdgeId(currentEdge.getID()) : null;
+				if (edgeName == null)
+					edgeName = "unknown";
 
+				// Write values to CSV
 				if (csvPrinter != null) {
-					csvPrinter.printRecord(currentSimTime, id, type, x, y, speed, fuelConsumption, co2Emission, coEmission, hcEmission,
-							noiseEmission, noxEmission, pmxEmission);
+					csvPrinter.printRecord(currentSimTime, id, type, point2d.getY(), point2d.getX(), currentEdge.getID(), edgeName, speed,
+							fuelConsumption, co2Emission, coEmission, hcEmission, noiseEmission, noxEmission, pmxEmission);
 				}
 
-			}));
+			}
 		}
 
 		csvPrinter.flush();
