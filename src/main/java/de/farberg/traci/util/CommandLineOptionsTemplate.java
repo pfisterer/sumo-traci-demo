@@ -1,5 +1,7 @@
 package de.farberg.traci.util;
 
+import java.io.File;
+
 import org.kohsuke.args4j.Option;
 
 public class CommandLineOptionsTemplate {
@@ -12,6 +14,9 @@ public class CommandLineOptionsTemplate {
 
 	@Option(name = "-p", aliases = { "--traci-port" }, usage = "Traci port", required = true)
 	public int traciPort = -1;
+
+	@Option(name = "--net-file", usage = "Sumo net file", required = false)
+	public File netFile = null;
 
 	@Option(name = "-n", aliases = { "--iterations" }, usage = "Number of iterations", required = false)
 	public int iterations = 10;

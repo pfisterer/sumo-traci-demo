@@ -1,8 +1,11 @@
 package de.farberg.traci.tracing;
 
+import java.awt.geom.Point2D;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetAddress;
+
+import javax.xml.stream.XMLStreamException;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
@@ -16,7 +19,10 @@ import org.slf4j.LoggerFactory;
 import com.diffplug.common.base.Errors;
 
 import de.farberg.traci.util.CommandLineOptionsTemplate;
+import de.farberg.traci.util.EdgeIdToNameMapping;
 import de.farberg.traci.util.LoggingUtil;
+import it.polito.appeal.traci.Lane;
+import it.polito.appeal.traci.PositionConversionQuery;
 import it.polito.appeal.traci.SumoTraciConnection;
 
 public class TraciSimpleTraceout {
@@ -24,7 +30,7 @@ public class TraciSimpleTraceout {
 		LoggingUtil.setupLogging();
 	}
 
-	public static void main(String[] args) throws IllegalStateException, IOException, InterruptedException {
+	public static void main(String[] args) throws IllegalStateException, IOException, InterruptedException, XMLStreamException {
 		// Parse command line options
 		CommandLineOptions options = parseCmdLineOptions(args);
 		Logger log = LoggerFactory.getLogger(Main.class);
@@ -42,7 +48,25 @@ public class TraciSimpleTraceout {
 						.withQuote('"')
 						.print(new FileWriter(options.csvOutFile));
 
+		log.debug("Trying to establish connection to sumo @ {}:{}", options.traciAddress, options.traciPort);
 		SumoTraciConnection traci = new SumoTraciConnection(InetAddress.getByName(options.traciAddress), options.traciPort);
+		PositionConversionQuery positionConversion = traci.queryPositionConversion();
+		EdgeIdToNameMapping edgeToNameMapping = null;
+
+		if (options.netFile != null) {
+			edgeToNameMapping = new EdgeIdToNameMapping(options.netFile);
+		}
+
+		for (Lane lane : traci.getLaneRepository().getAll().values()) {
+			Point2D position = new Point2D.Double(lane.getShape().getBounds().getCenterX(), lane.getShape().getBounds().getCenterY());
+			positionConversion.setObsolete();
+			positionConversion.setPositionToConvert(position, true);
+			Point2D point2d = positionConversion.get();
+
+			String name = edgeToNameMapping != null ? edgeToNameMapping.getNameForEdgeId(lane.getParentEdge().getID()) : "<no name>";
+			log.debug("{}: x/y: {} --> lat/long: {}, {}", name, position, point2d.getY(), point2d.getX());
+
+		}
 
 		for (int i = 0; i < options.iterations; ++i) {
 			traci.nextSimStep();
@@ -64,6 +88,13 @@ public class TraciSimpleTraceout {
 				double noiseEmission = vehicle.getNoiseEmission();
 				double noxEmission = vehicle.getNoxEmission();
 				double pmxEmission = vehicle.getPmxEmission();
+
+				Point2D position = new Point2D.Double(x, y);
+				positionConversion.setObsolete();
+				positionConversion.setPositionToConvert(position, true);
+				Point2D point2d = positionConversion.get();
+
+				log.debug("x/y: {}, lat/long: {}", position, point2d);
 
 				if (csvPrinter != null) {
 					csvPrinter.printRecord(currentSimTime, id, type, x, y, speed, fuelConsumption, co2Emission, coEmission, hcEmission,
